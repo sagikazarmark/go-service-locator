@@ -20,6 +20,8 @@
               go_1_20
             ];
           };
+
+          ci = devShells.default;
         };
       });
 }

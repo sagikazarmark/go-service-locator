@@ -3,7 +3,7 @@ version: '3'
 tasks:
   generate:
     cmds:
-      - go run main.go test ServiceA ServiceB > test/service_locator_gen.go
+      - go run main.go test ServiceA ServiceB:named > test/service_locator_gen.go
     sources:
       - main.go
     generates:

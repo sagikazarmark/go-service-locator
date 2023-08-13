@@ -21,7 +21,7 @@ func (s serviceB) Bar() {}
 func TestServiceLocator(t *testing.T) {
 	registry := NewServiceRegistry()
 
-	registry.RegisterServiceA("service", func(_ string, serviceLocator ServiceLocator) (ServiceA, error) {
+	registry.RegisterServiceA(func(serviceLocator ServiceLocator) (ServiceA, error) {
 		serviceB, err := serviceLocator.GetServiceB("service")
 		if err != nil {
 			return nil, err
@@ -36,31 +36,31 @@ func TestServiceLocator(t *testing.T) {
 		return serviceB{}, nil
 	})
 
-	service, err := registry.GetServiceA("service")
+	service, err := registry.GetServiceA()
 
 	require.NoError(t, err)
 
-	assert.Equal(t, service, serviceA{
+	assert.Equal(t, serviceA{
 		serviceB: serviceB{},
-	})
+	}, service)
 }
 
 func TestServiceFactoryNotFound(t *testing.T) {
 	registry := NewServiceRegistry()
 
-	_, err := registry.GetServiceA("service")
+	_, err := registry.GetServiceA()
 
-	assert.ErrorContains(t, err, "no factory registered for ServiceA with name 'service'")
+	assert.ErrorContains(t, err, "no factory registered for ServiceA")
 }
 
 func TestServiceFactoryFailed(t *testing.T) {
 	registry := NewServiceRegistry()
 
-	registry.RegisterServiceA("service", func(_ string, serviceLocator ServiceLocator) (ServiceA, error) {
+	registry.RegisterServiceA(func(serviceLocator ServiceLocator) (ServiceA, error) {
 		return nil, errors.New("failed to create service")
 	})
 
-	_, err := registry.GetServiceA("service")
+	_, err := registry.GetServiceA()
 
 	assert.ErrorContains(t, err, "failed to create service")
 }
@@ -68,7 +68,7 @@ func TestServiceFactoryFailed(t *testing.T) {
 func TestCircularDependencyDetection(t *testing.T) {
 	registry := NewServiceRegistry()
 
-	registry.RegisterServiceA("service", func(_ string, serviceLocator ServiceLocator) (ServiceA, error) {
+	registry.RegisterServiceA(func(serviceLocator ServiceLocator) (ServiceA, error) {
 		_, err := serviceLocator.GetServiceB("service")
 		if err != nil {
 			return nil, err
@@ -78,7 +78,7 @@ func TestCircularDependencyDetection(t *testing.T) {
 	})
 
 	registry.RegisterServiceB("service", func(_ string, serviceLocator ServiceLocator) (ServiceB, error) {
-		_, err := serviceLocator.GetServiceA("service")
+		_, err := serviceLocator.GetServiceA()
 		if err != nil {
 			return nil, err
 		}
@@ -86,11 +86,11 @@ func TestCircularDependencyDetection(t *testing.T) {
 		return nil, nil
 	})
 
-	_, err := registry.GetServiceA("service")
+	_, err := registry.GetServiceA()
 
 	assert.Equal(t, CircularDependencyError{
 		ServiceType:     "ServiceA",
-		ServiceName:     "service",
-		DependencyGraph: []string{"ServiceA:service", "ServiceB:service"},
+		ServiceName:     "",
+		DependencyGraph: []string{"ServiceA", "ServiceB:service"},
 	}, err)
 }

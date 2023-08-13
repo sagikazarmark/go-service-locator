@@ -13,3 +13,6 @@ indent_size = 2
 
 [*.go]
 indent_style = tab
+
+[{*.yml,*.yaml}]
+indent_size = 2

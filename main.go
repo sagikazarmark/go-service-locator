@@ -22,7 +22,7 @@ func main() {
 	f.ImportName("strings", "strings")
 
 	generateServiceLocator(f, services)
-	generateGenericServiceFactory(f)
+	generateGenericNamedServiceFactory(f)
 	generateServiceRegistry(f, services)
 	generateServiceLocationContext(f, services)
 	generateCircularDependencyError(f)
@@ -43,9 +43,9 @@ func generateServiceLocator(f *jen.File, services []string) {
 	})
 }
 
-func generateGenericServiceFactory(f *jen.File) {
-	f.Comment("ServiceFactory creates a new instance of T.")
-	f.Type().Id("ServiceFactory").Types(jen.Id("T").Any()).Func().Params(jen.String(), jen.Id("ServiceLocator")).Params(jen.Id("T"), jen.Error())
+func generateGenericNamedServiceFactory(f *jen.File) {
+	f.Comment("NamedServiceFactory creates a new named instance of T.")
+	f.Type().Id("NamedServiceFactory").Types(jen.Id("T").Any()).Func().Params(jen.String(), jen.Id("ServiceLocator")).Params(jen.Id("T"), jen.Error())
 }
 
 func generateServiceRegistry(f *jen.File, services []string) {
@@ -57,7 +57,7 @@ func generateServiceRegistry(f *jen.File, services []string) {
 
 		for _, service := range services {
 			g.Id("instances" + service).Map(jen.String()).Id(service)
-			g.Id("factories" + service).Map(jen.String()).Id("ServiceFactory").Types(jen.Id(service))
+			g.Id("factories" + service).Map(jen.String()).Id("NamedServiceFactory").Types(jen.Id(service))
 		}
 	})
 
@@ -66,7 +66,7 @@ func generateServiceRegistry(f *jen.File, services []string) {
 		jen.Return(jen.Op("&").Id("ServiceRegistry").ValuesFunc(func(g *jen.Group) {
 			for _, service := range services {
 				g.Id("instances" + service).Op(":").Make(jen.Map(jen.String()).Id(service))
-				g.Id("factories" + service).Op(":").Make(jen.Map(jen.String()).Id("ServiceFactory").Types(jen.Id(service)))
+				g.Id("factories" + service).Op(":").Make(jen.Map(jen.String()).Id("NamedServiceFactory").Types(jen.Id(service)))
 			}
 		})),
 	)
@@ -82,7 +82,7 @@ func generateServiceRegistryMethods(f *jen.File, services []string) {
 		f.Commentf("Register%s registers a factory for {%s}.", service, service)
 		f.Func().Params(jen.Id("r").Op("*").Id("ServiceRegistry")).Id("Register"+service).Params(
 			jen.Id("serviceName").String(),
-			jen.Id("factory").Id("ServiceFactory").Types(jen.Id(service)),
+			jen.Id("factory").Id("NamedServiceFactory").Types(jen.Id(service)),
 		).Block(
 			jen.Id("r").Dot("mu").Dot("Lock").Call(),
 			jen.Defer().Id("r").Dot("mu").Dot("Unlock").Call(),

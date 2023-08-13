@@ -12,8 +12,8 @@ type ServiceLocator interface {
 	GetServiceB(name string) (ServiceB, error)
 }
 
-// ServiceFactory creates a new instance of T.
-type ServiceFactory[T any] func(string, ServiceLocator) (T, error)
+// NamedServiceFactory creates a new named instance of T.
+type NamedServiceFactory[T any] func(string, ServiceLocator) (T, error)
 
 // ServiceRegistry allows registering service factories to construct new instances of a service.
 // ServiceRegistry is also the primary {ServiceLocator} entrypoint.
@@ -21,18 +21,18 @@ type ServiceRegistry struct {
 	mu sync.Mutex
 
 	instancesServiceA map[string]ServiceA
-	factoriesServiceA map[string]ServiceFactory[ServiceA]
+	factoriesServiceA map[string]NamedServiceFactory[ServiceA]
 	instancesServiceB map[string]ServiceB
-	factoriesServiceB map[string]ServiceFactory[ServiceB]
+	factoriesServiceB map[string]NamedServiceFactory[ServiceB]
 }
 
 // NewServiceRegistry instantiates a new {ServiceRegistry}.
 func NewServiceRegistry() *ServiceRegistry {
-	return &ServiceRegistry{instancesServiceA: make(map[string]ServiceA), factoriesServiceA: make(map[string]ServiceFactory[ServiceA]), instancesServiceB: make(map[string]ServiceB), factoriesServiceB: make(map[string]ServiceFactory[ServiceB])}
+	return &ServiceRegistry{instancesServiceA: make(map[string]ServiceA), factoriesServiceA: make(map[string]NamedServiceFactory[ServiceA]), instancesServiceB: make(map[string]ServiceB), factoriesServiceB: make(map[string]NamedServiceFactory[ServiceB])}
 }
 
 // RegisterServiceA registers a factory for {ServiceA}.
-func (r *ServiceRegistry) RegisterServiceA(serviceName string, factory ServiceFactory[ServiceA]) {
+func (r *ServiceRegistry) RegisterServiceA(serviceName string, factory NamedServiceFactory[ServiceA]) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -76,7 +76,7 @@ func (r *ServiceRegistry) getServiceA(serviceName string, ctx *serviceLocationCo
 }
 
 // RegisterServiceB registers a factory for {ServiceB}.
-func (r *ServiceRegistry) RegisterServiceB(serviceName string, factory ServiceFactory[ServiceB]) {
+func (r *ServiceRegistry) RegisterServiceB(serviceName string, factory NamedServiceFactory[ServiceB]) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

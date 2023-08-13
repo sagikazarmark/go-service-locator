@@ -1,64 +1,218 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"go/ast"
+	"go/token"
+	"go/types"
 	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/dave/jennifer/jen"
-	"golang.org/x/exp/slices"
+	"golang.org/x/tools/go/packages"
 )
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "insufficient arguments")
-		fmt.Fprintln(os.Stderr, "usage: <command> PACKAGE SERVICE_TYPE [SERVICE_TYPE...]")
+	pkg := "."
+
+	if len(os.Args) > 0 {
+		pkg = os.Args[1]
 	}
 
-	pkg := os.Args[1]
-	services := os.Args[2:]
+	wd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
 
-	serviceDefinitions := make([]serviceDefinition, 0, len(services))
+	env := os.Environ()
 
-	for _, service := range services {
-		serviceSegments := strings.SplitN(service, ":", 2)
+	pkgs, errs := load(context.Background(), wd, env, []string{pkg})
+	if len(errs) > 0 {
+		panic(errors.Join(errs...))
+	}
 
-		def := serviceDefinition{
-			name: serviceSegments[0],
-		}
+	if len(pkgs) == 0 {
+		fmt.Fprintln(os.Stderr, "no packages found")
+	}
 
-		if len(serviceSegments) > 1 {
-			serviceParams := strings.Split(serviceSegments[1], ",")
+	outDir, err := detectOutputDir(pkgs[0].GoFiles)
+	if err != nil {
+		panic(err)
+	}
 
-			if slices.Contains(serviceParams, "named") {
-				def.named = true
+	var serviceDefinitions []serviceDefinition
+
+	for _, f := range pkgs[0].Syntax {
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+
+			for _, specs := range gen.Specs {
+				ts, ok := specs.(*ast.TypeSpec)
+				if !ok || ts.Name.String() != "ServiceLocator" {
+					continue
+				}
+
+				iface, ok := ts.Type.(*ast.InterfaceType)
+				if !ok {
+					continue
+				}
+
+				typ := pkgs[0].TypesInfo.TypeOf(iface).(*types.Interface)
+
+				for i := 0; i < typ.NumMethods(); i++ {
+					method := typ.Method(i)
+
+					sig := method.Type().(*types.Signature)
+
+					params := sig.Params()
+					results := sig.Results()
+
+					if results.Len() != 2 {
+						continue
+					}
+
+					serviceName := results.At(0).Type().(*types.Named).Obj().Name()
+
+					if method.Name() != fmt.Sprintf("Get%s", serviceName) {
+						continue
+					}
+
+					if results.At(1).Type().String() != "error" {
+						continue
+					}
+
+					svc := serviceDefinition{
+						name:       serviceName,
+						importPath: results.At(0).Type().(*types.Named).Obj().Pkg().Path(),
+					}
+
+					if params.Len() > 1 {
+						continue
+					}
+
+					if params.Len() == 1 {
+						param := params.At(0)
+
+						if param.Name() != "name" || param.Type().String() != "string" {
+							continue
+						}
+
+						svc.named = true
+					}
+
+					serviceDefinitions = append(serviceDefinitions, svc)
+				}
 			}
 		}
-
-		serviceDefinitions = append(serviceDefinitions, def)
 	}
 
-	f := jen.NewFile(pkg)
+	//
+	// for _, service := range services {
+	// 	serviceSegments := strings.SplitN(service, ":", 2)
+	//
+	// 	def := serviceDefinition{
+	// 		name: serviceSegments[0],
+	// 	}
+	//
+	// 	if len(serviceSegments) > 1 {
+	// 		serviceParams := strings.Split(serviceSegments[1], ",")
+	//
+	// 		if slices.Contains(serviceParams, "named") {
+	// 			def.named = true
+	// 		}
+	// 	}
+	//
+	// 	serviceDefinitions = append(serviceDefinitions, def)
+	// }
+
+	f := jen.NewFilePath(pkgs[0].PkgPath)
 	f.ImportName("sync", "sync")
 	f.ImportName("fmt", "fmt")
 	f.ImportName("strings", "strings")
 
-	generateServiceLocator(f, serviceDefinitions)
+	// generateServiceLocator(f, serviceDefinitions)
 	generateGenericServiceFactory(f)
 	generateGenericNamedServiceFactory(f)
 	generateServiceRegistry(f, serviceDefinitions)
 	generateServiceLocationContext(f, serviceDefinitions)
 	generateCircularDependencyError(f)
 
-	err := f.Render(os.Stdout)
+	file, err := os.Create(filepath.Join(outDir, "service_locator_gen.go"))
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	err = f.Render(file)
 	if err != nil {
 		fmt.Fprint(os.Stderr, "Error generating the code:", err)
 		os.Exit(1)
 	}
 }
 
+// load typechecks the packages that match the given patterns and
+// includes source for all transitive dependencies. The patterns are
+// defined by the underlying build system. For the go tool, this is
+// described at https://golang.org/cmd/go/#hdr-Package_lists_and_patterns
+//
+// wd is the working directory and env is the set of environment
+// variables to use when loading the packages specified by patterns. If
+// env is nil or empty, it is interpreted as an empty set of variables.
+// In case of duplicate environment variables, the last one in the list
+// takes precedence.
+func load(ctx context.Context, wd string, env []string, patterns []string) ([]*packages.Package, []error) {
+	cfg := &packages.Config{
+		Context: ctx,
+		Mode:    packages.LoadAllSyntax,
+		Dir:     wd,
+		Env:     env,
+	}
+
+	escaped := make([]string, len(patterns))
+	for i := range patterns {
+		escaped[i] = "pattern=" + patterns[i]
+	}
+
+	pkgs, err := packages.Load(cfg, escaped...)
+	if err != nil {
+		return nil, []error{err}
+	}
+
+	var errs []error
+	for _, p := range pkgs {
+		for _, e := range p.Errors {
+			errs = append(errs, e)
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+
+	return pkgs, nil
+}
+
+func detectOutputDir(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", errors.New("no files to derive output directory from")
+	}
+	dir := filepath.Dir(paths[0])
+	for _, p := range paths[1:] {
+		if dir2 := filepath.Dir(p); dir2 != dir {
+			return "", fmt.Errorf("found conflicting directories %q and %q", dir, dir2)
+		}
+	}
+	return dir, nil
+}
+
 type serviceDefinition struct {
-	name  string
+	name       string
+	importPath string
+
 	named bool
 }
 
@@ -108,11 +262,11 @@ func generateServiceRegistry(f *jen.File, services []serviceDefinition) {
 
 		for _, service := range services {
 			if service.named {
-				g.Id("instances" + service.name).Map(jen.String()).Id(service.name)
-				g.Id("factories" + service.name).Map(jen.String()).Id("NamedServiceFactory").Types(jen.Id(service.name))
+				g.Id("instances"+service.name).Map(jen.String()).Qual(service.importPath, service.name)
+				g.Id("factories" + service.name).Map(jen.String()).Id("NamedServiceFactory").Types(jen.Qual(service.importPath, service.name))
 			} else {
-				g.Id("instance" + service.name).Id(service.name)
-				g.Id("factory" + service.name).Id("ServiceFactory").Types(jen.Id(service.name))
+				g.Id("instance"+service.name).Qual(service.importPath, service.name)
+				g.Id("factory" + service.name).Id("ServiceFactory").Types(jen.Qual(service.importPath, service.name))
 			}
 		}
 	})
@@ -122,8 +276,8 @@ func generateServiceRegistry(f *jen.File, services []serviceDefinition) {
 		jen.Return(jen.Op("&").Id("ServiceRegistry").ValuesFunc(func(g *jen.Group) {
 			for _, service := range services {
 				if service.named {
-					g.Id("instances" + service.name).Op(":").Make(jen.Map(jen.String()).Id(service.name))
-					g.Id("factories" + service.name).Op(":").Make(jen.Map(jen.String()).Id("NamedServiceFactory").Types(jen.Id(service.name)))
+					g.Id("instances" + service.name).Op(":").Make(jen.Map(jen.String()).Qual(service.importPath, service.name))
+					g.Id("factories" + service.name).Op(":").Make(jen.Map(jen.String()).Id("NamedServiceFactory").Types(jen.Qual(service.importPath, service.name)))
 				}
 			}
 		})),
@@ -143,9 +297,9 @@ func generateServiceRegistryMethods(f *jen.File, services []serviceDefinition) {
 			ParamsFunc(func(g *jen.Group) {
 				if service.named {
 					g.Id("serviceName").String()
-					g.Id("factory").Id("NamedServiceFactory").Types(jen.Id(service.name))
+					g.Id("factory").Id("NamedServiceFactory").Types(jen.Qual(service.importPath, service.name))
 				} else {
-					g.Id("factory").Id("ServiceFactory").Types(jen.Id(service.name))
+					g.Id("factory").Id("ServiceFactory").Types(jen.Qual(service.importPath, service.name))
 				}
 			}).
 			BlockFunc(func(g *jen.Group) {
@@ -167,7 +321,7 @@ func generateServiceRegistryMethods(f *jen.File, services []serviceDefinition) {
 		f.Func().
 			Params(jen.Id("r").Op("*").Id("ServiceRegistry")).Id("Get"+service.name).
 			ParamsFunc(ifNamedFunc(service.named, jen.Id("serviceName").String())).
-			Params(jen.Id(service.name), jen.Error()).
+			Params(jen.Qual(service.importPath, service.name), jen.Error()).
 			BlockFunc(func(g *jen.Group) {
 				g.Return().Id("r").Dot("get" + service.name).CallFunc(func(g *jen.Group) {
 					ifNamed(service.named, g, jen.Id("serviceName"))
@@ -184,7 +338,7 @@ func generateServiceRegistryMethods(f *jen.File, services []serviceDefinition) {
 				ifNamed(service.named, g, jen.Id("serviceName").String())
 				g.Id("ctx").Op("*").Id("serviceLocationContext")
 			}).
-			Params(jen.Id(service.name), jen.Error()).
+			Params(jen.Qual(service.importPath, service.name), jen.Error()).
 			BlockFunc(func(g *jen.Group) {
 				g.Id("r").Dot("mu").Dot("Lock").Call()
 
@@ -306,7 +460,7 @@ func generateServiceLocationContext(f *jen.File, services []serviceDefinition) {
 		f.Func().
 			Params(jen.Id("c").Op("*").Id("serviceLocationContext")).Id("Get"+service.name).
 			ParamsFunc(ifNamedFunc(service.named, jen.Id("serviceName").String())).
-			Params(jen.Id(service.name), jen.Error()).
+			Params(jen.Qual(service.importPath, service.name), jen.Error()).
 			Block(
 				jen.Return(jen.Id("c").Dot("registry").Dot("get" + service.name).CallFunc(func(g *jen.Group) {
 					ifNamed(service.named, g, jen.Id("serviceName"))

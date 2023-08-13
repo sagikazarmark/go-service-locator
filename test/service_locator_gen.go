@@ -3,15 +3,10 @@ package test
 import (
 	"errors"
 	"fmt"
+	subtest "github.com/sagikazarmark/go-service-locator/test/subtest"
 	"strings"
 	"sync"
 )
-
-// ServiceLocator locates named services in a type-safe manner.
-type ServiceLocator interface {
-	GetServiceA() (ServiceA, error)
-	GetServiceB(name string) (ServiceB, error)
-}
 
 // ServiceFactory creates a new instance of T.
 type ServiceFactory[T any] func(ServiceLocator) (T, error)
@@ -28,6 +23,8 @@ type ServiceRegistry struct {
 	factoryServiceA   ServiceFactory[ServiceA]
 	instancesServiceB map[string]ServiceB
 	factoriesServiceB map[string]NamedServiceFactory[ServiceB]
+	instanceServiceC  subtest.ServiceC
+	factoryServiceC   ServiceFactory[subtest.ServiceC]
 }
 
 // NewServiceRegistry instantiates a new {ServiceRegistry}.
@@ -125,6 +122,52 @@ func (r *ServiceRegistry) getServiceB(serviceName string, ctx *serviceLocationCo
 	return instance, nil
 }
 
+// RegisterServiceC registers a factory for {ServiceC}.
+func (r *ServiceRegistry) RegisterServiceC(factory ServiceFactory[subtest.ServiceC]) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.factoryServiceC = factory
+}
+
+// GetServiceC retrieves an instance of {ServiceC}.
+func (r *ServiceRegistry) GetServiceC() (subtest.ServiceC, error) {
+	return r.getServiceC(newServiceLocationContext(r, 0))
+}
+
+func (r *ServiceRegistry) getServiceC(ctx *serviceLocationContext) (subtest.ServiceC, error) {
+	r.mu.Lock()
+	instance := r.instanceServiceC
+	instanceOk := instance != nil
+	factory := r.factoryServiceC
+	factoryOk := factory != nil
+	r.mu.Unlock()
+
+	if instanceOk {
+		return instance, nil
+	}
+
+	if ctx.isVisitedServiceC() {
+		return nil, newCircularDependencyError("ServiceC", "", ctx.dependencyGraph)
+	}
+	ctx.markVisitedServiceC()
+
+	if !factoryOk {
+		return nil, errors.New("no factory registered for ServiceC")
+	}
+
+	instance, err := factory(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	r.mu.Lock()
+	r.instanceServiceC = instance
+	r.mu.Unlock()
+
+	return instance, nil
+}
+
 type serviceLocationContext struct {
 	registry        *ServiceRegistry
 	dependencyGraph []string
@@ -133,6 +176,7 @@ type serviceLocationContext struct {
 
 	visitedServiceA bool
 	visitedServiceB map[string]bool
+	visitedServiceC bool
 }
 
 func newServiceLocationContext(registry *ServiceRegistry, maxDepth int) *serviceLocationContext {
@@ -175,6 +219,25 @@ func (c *serviceLocationContext) markVisitedServiceB(serviceName string) {
 
 	c.visitedServiceB[serviceName] = true
 	c.dependencyGraph = append(c.dependencyGraph, "ServiceB:"+serviceName)
+}
+
+func (c *serviceLocationContext) GetServiceC() (subtest.ServiceC, error) {
+	return c.registry.getServiceC(c)
+}
+
+func (c *serviceLocationContext) isVisitedServiceC() bool {
+	c.visitLock.Lock()
+	defer c.visitLock.Unlock()
+
+	return c.visitedServiceC
+}
+
+func (c *serviceLocationContext) markVisitedServiceC() {
+	c.visitLock.Lock()
+	defer c.visitLock.Unlock()
+
+	c.visitedServiceC = true
+	c.dependencyGraph = append(c.dependencyGraph, "ServiceC")
 }
 
 // CircularDependencyError is returned when there is a circular dependency between two services.

@@ -21,7 +21,7 @@ func (s serviceB) Bar() {}
 func TestServiceLocator(t *testing.T) {
 	registry := NewServiceRegistry()
 
-	registry.RegisterServiceA("service", func(serviceLocator ServiceLocator) (ServiceA, error) {
+	registry.RegisterServiceA("service", func(_ string, serviceLocator ServiceLocator) (ServiceA, error) {
 		serviceB, err := serviceLocator.GetServiceB("service")
 		if err != nil {
 			return nil, err
@@ -32,7 +32,7 @@ func TestServiceLocator(t *testing.T) {
 		}, nil
 	})
 
-	registry.RegisterServiceB("service", func(serviceLocator ServiceLocator) (ServiceB, error) {
+	registry.RegisterServiceB("service", func(_ string, serviceLocator ServiceLocator) (ServiceB, error) {
 		return serviceB{}, nil
 	})
 
@@ -56,7 +56,7 @@ func TestServiceFactoryNotFound(t *testing.T) {
 func TestServiceFactoryFailed(t *testing.T) {
 	registry := NewServiceRegistry()
 
-	registry.RegisterServiceA("service", func(serviceLocator ServiceLocator) (ServiceA, error) {
+	registry.RegisterServiceA("service", func(_ string, serviceLocator ServiceLocator) (ServiceA, error) {
 		return nil, errors.New("failed to create service")
 	})
 
@@ -68,7 +68,7 @@ func TestServiceFactoryFailed(t *testing.T) {
 func TestCircularDependencyDetection(t *testing.T) {
 	registry := NewServiceRegistry()
 
-	registry.RegisterServiceA("service", func(serviceLocator ServiceLocator) (ServiceA, error) {
+	registry.RegisterServiceA("service", func(_ string, serviceLocator ServiceLocator) (ServiceA, error) {
 		_, err := serviceLocator.GetServiceB("service")
 		if err != nil {
 			return nil, err
@@ -77,7 +77,7 @@ func TestCircularDependencyDetection(t *testing.T) {
 		return nil, nil
 	})
 
-	registry.RegisterServiceB("service", func(serviceLocator ServiceLocator) (ServiceB, error) {
+	registry.RegisterServiceB("service", func(_ string, serviceLocator ServiceLocator) (ServiceB, error) {
 		_, err := serviceLocator.GetServiceA("service")
 		if err != nil {
 			return nil, err

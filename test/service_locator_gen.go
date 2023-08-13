@@ -12,8 +12,8 @@ type ServiceLocator interface {
 	GetServiceB(name string) (ServiceB, error)
 }
 
-type ServiceAFactory func(ServiceLocator) (ServiceA, error)
-type ServiceBFactory func(ServiceLocator) (ServiceB, error)
+// ServiceFactory creates a new instance of T.
+type ServiceFactory[T any] func(string, ServiceLocator) (T, error)
 
 // ServiceRegistry allows registering service factories to construct new instances of a service.
 // ServiceRegistry is also the primary {ServiceLocator} entrypoint.
@@ -21,23 +21,25 @@ type ServiceRegistry struct {
 	mu sync.Mutex
 
 	instancesServiceA map[string]ServiceA
-	factoriesServiceA map[string]ServiceAFactory
+	factoriesServiceA map[string]ServiceFactory[ServiceA]
 	instancesServiceB map[string]ServiceB
-	factoriesServiceB map[string]ServiceBFactory
+	factoriesServiceB map[string]ServiceFactory[ServiceB]
 }
 
 // NewServiceRegistry instantiates a new {ServiceRegistry}.
 func NewServiceRegistry() *ServiceRegistry {
-	return &ServiceRegistry{instancesServiceA: make(map[string]ServiceA), factoriesServiceA: make(map[string]ServiceAFactory), instancesServiceB: make(map[string]ServiceB), factoriesServiceB: make(map[string]ServiceBFactory)}
+	return &ServiceRegistry{instancesServiceA: make(map[string]ServiceA), factoriesServiceA: make(map[string]ServiceFactory[ServiceA]), instancesServiceB: make(map[string]ServiceB), factoriesServiceB: make(map[string]ServiceFactory[ServiceB])}
 }
 
-func (r *ServiceRegistry) RegisterServiceA(serviceName string, factory ServiceAFactory) {
+// RegisterServiceA registers a factory for {ServiceA}.
+func (r *ServiceRegistry) RegisterServiceA(serviceName string, factory ServiceFactory[ServiceA]) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.factoriesServiceA[serviceName] = factory
 }
 
+// GetServiceA retrieves an instance of {ServiceA}.
 func (r *ServiceRegistry) GetServiceA(serviceName string) (ServiceA, error) {
 	return r.getServiceA(serviceName, newServiceLocationContext(r, 0))
 }
@@ -61,7 +63,7 @@ func (r *ServiceRegistry) getServiceA(serviceName string, ctx *serviceLocationCo
 		return nil, fmt.Errorf("no factory registered for ServiceA with name '%s'", serviceName)
 	}
 
-	instance, err := factory(ctx)
+	instance, err := factory(serviceName, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -73,13 +75,15 @@ func (r *ServiceRegistry) getServiceA(serviceName string, ctx *serviceLocationCo
 	return instance, nil
 }
 
-func (r *ServiceRegistry) RegisterServiceB(serviceName string, factory ServiceBFactory) {
+// RegisterServiceB registers a factory for {ServiceB}.
+func (r *ServiceRegistry) RegisterServiceB(serviceName string, factory ServiceFactory[ServiceB]) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.factoriesServiceB[serviceName] = factory
 }
 
+// GetServiceB retrieves an instance of {ServiceB}.
 func (r *ServiceRegistry) GetServiceB(serviceName string) (ServiceB, error) {
 	return r.getServiceB(serviceName, newServiceLocationContext(r, 0))
 }
@@ -103,7 +107,7 @@ func (r *ServiceRegistry) getServiceB(serviceName string, ctx *serviceLocationCo
 		return nil, fmt.Errorf("no factory registered for ServiceB with name '%s'", serviceName)
 	}
 
-	instance, err := factory(ctx)
+	instance, err := factory(serviceName, ctx)
 	if err != nil {
 		return nil, err
 	}

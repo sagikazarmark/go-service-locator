@@ -12,6 +12,9 @@ type ServiceLocator interface {
 	GetServiceB(name string) (ServiceB, error)
 }
 
+// ServiceFactory creates a new instance of T.
+type ServiceFactory[T any] func(ServiceLocator) (T, error)
+
 // NamedServiceFactory creates a new named instance of T.
 type NamedServiceFactory[T any] func(string, ServiceLocator) (T, error)
 
